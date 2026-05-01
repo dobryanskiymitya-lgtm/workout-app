@@ -1,180 +1,222 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
-const defaultExercises = [
-  { id: 1, name: "Жим лёжа", weight: 60, sets: 4, reps: 8 },
-  { id: 2, name: "Приседания", weight: 80, sets: 4, reps: 10 },
-  { id: 3, name: "Тяга верхнего блока", weight: 45, sets: 3, reps: 12 },
-];
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function App() {
-  const [exercises, setExercises] = useState(() => {
-    const saved = localStorage.getItem("workout-app");
-    return saved ? JSON.parse(saved) : defaultExercises;
+  const [records, setRecords] = useState(() => {
+    const saved = localStorage.getItem("workout-history");
+    return saved ? JSON.parse(saved) : [];
   });
 
-  const [form, setForm] = useState({ name: "", weight: "", sets: "", reps: "" });
+  const [form, setForm] = useState({
+    date: today(),
+    name: "",
+    weight: "",
+    sets: "",
+    reps: "",
+  });
+
+  const [editingId, setEditingId] = useState(null);
+  const [selectedExercise, setSelectedExercise] = useState("Все");
 
   useEffect(() => {
-    localStorage.setItem("workout-app", JSON.stringify(exercises));
-  }, [exercises]);
+    localStorage.setItem("workout-history", JSON.stringify(records));
+  }, [records]);
 
-  function addExercise() {
+  function saveRecord() {
     if (!form.name.trim()) return;
 
-    setExercises([
-      {
-        id: Date.now(),
-        name: form.name,
-        weight: Number(form.weight) || 0,
-        sets: Number(form.sets) || 0,
-        reps: Number(form.reps) || 0,
-      },
-      ...exercises,
-    ]);
+    const record = {
+      id: editingId || Date.now(),
+      date: form.date,
+      name: form.name.trim(),
+      weight: Number(form.weight) || 0,
+      sets: Number(form.sets) || 0,
+      reps: Number(form.reps) || 0,
+    };
 
-    setForm({ name: "", weight: "", sets: "", reps: "" });
+    if (editingId) {
+      setRecords(records.map((item) => (item.id === editingId ? record : item)));
+      setEditingId(null);
+    } else {
+      setRecords([record, ...records]);
+    }
+
+    setForm({
+      date: today(),
+      name: "",
+      weight: "",
+      sets: "",
+      reps: "",
+    });
   }
 
-  function deleteExercise(id) {
-    setExercises(exercises.filter((exercise) => exercise.id !== id));
+  function editRecord(record) {
+    setEditingId(record.id);
+    setForm(record);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function updateExercise(id, field, value) {
-    setExercises(
-      exercises.map((exercise) =>
-        exercise.id === id ? { ...exercise, [field]: value } : exercise
-      )
-    );
+  function deleteRecord(id) {
+    setRecords(records.filter((item) => item.id !== id));
   }
 
-  const totalSets = exercises.reduce((sum, item) => sum + Number(item.sets), 0);
-  const totalVolume = exercises.reduce(
-    (sum, item) => sum + Number(item.weight) * Number(item.sets) * Number(item.reps),
+  const exercises = useMemo(() => {
+    return ["Все", ...new Set(records.map((item) => item.name))];
+  }, [records]);
+
+  const filteredRecords =
+    selectedExercise === "Все"
+      ? records
+      : records.filter((item) => item.name === selectedExercise);
+
+  const sortedRecords = [...filteredRecords].sort(
+    (a, b) => new Date(b.date) - new Date(a.date)
+  );
+
+  const bestWeight = filteredRecords.length
+    ? Math.max(...filteredRecords.map((item) => item.weight))
+    : 0;
+
+  const totalVolume = filteredRecords.reduce(
+    (sum, item) => sum + item.weight * item.sets * item.reps,
     0
   );
 
+  const groupedByDate = sortedRecords.reduce((groups, item) => {
+    if (!groups[item.date]) groups[item.date] = [];
+    groups[item.date].push(item);
+    return groups;
+  }, {});
+
   return (
     <main className="app">
-      <section className="hero">
+      <header className="hero">
         <div>
-          <p className="badge">Сегодня</p>
-          <h1>Workout Pro</h1>
-          <p className="subtitle">Удобный дневник тренировки прямо в зале.</p>
+          <p className="badge">Дневник прогресса</p>
+          <h1>Workout Tracker</h1>
+          <p>Следи за весами, подходами и ростом силы по датам.</p>
         </div>
-        <div className="hero-icon">💪</div>
-      </section>
+        <div className="heroIcon">💪</div>
+      </header>
 
       <section className="stats">
-        <div className="stat-card">
-          <strong>{exercises.length}</strong>
-          <span>Упражнения</span>
+        <div>
+          <strong>{records.length}</strong>
+          <span>записей</span>
         </div>
-        <div className="stat-card">
-          <strong>{totalSets}</strong>
-          <span>Подходы</span>
+        <div>
+          <strong>{bestWeight}</strong>
+          <span>лучший вес</span>
         </div>
-        <div className="stat-card">
+        <div>
           <strong>{totalVolume}</strong>
-          <span>Объём кг</span>
+          <span>общий объём</span>
         </div>
       </section>
 
       <section className="panel">
-        <h2>Добавить упражнение</h2>
+        <h2>{editingId ? "Редактировать упражнение" : "Добавить упражнение"}</h2>
 
-        <div className="form-grid">
+        <div className="form">
           <input
-            className="full"
+            type="date"
+            value={form.date}
+            onChange={(e) => setForm({ ...form, date: e.target.value })}
+          />
+
+          <input
             placeholder="Название упражнения"
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
 
           <input
-            placeholder="Вес"
             type="number"
+            placeholder="Вес, кг"
             value={form.weight}
             onChange={(e) => setForm({ ...form, weight: e.target.value })}
           />
 
           <input
-            placeholder="Подходы"
             type="number"
+            placeholder="Подходы"
             value={form.sets}
             onChange={(e) => setForm({ ...form, sets: e.target.value })}
           />
 
           <input
-            placeholder="Повторы"
             type="number"
+            placeholder="Повторы"
             value={form.reps}
             onChange={(e) => setForm({ ...form, reps: e.target.value })}
           />
         </div>
 
-        <button className="primary-btn" onClick={addExercise}>
-          Добавить
+        <button className="mainBtn" onClick={saveRecord}>
+          {editingId ? "Сохранить изменения" : "Добавить запись"}
         </button>
       </section>
 
-      <section className="workout-list">
-        <h2>План тренировки</h2>
+      <section className="filter">
+        <h2>Прогресс</h2>
 
-        {exercises.map((exercise) => (
-          <article className="exercise-card" key={exercise.id}>
-            <div className="exercise-header">
-              <input
-                className="exercise-title"
-                value={exercise.name}
-                onChange={(e) => updateExercise(exercise.id, "name", e.target.value)}
-              />
+        <select
+          value={selectedExercise}
+          onChange={(e) => setSelectedExercise(e.target.value)}
+        >
+          {exercises.map((exercise) => (
+            <option key={exercise}>{exercise}</option>
+          ))}
+        </select>
+      </section>
 
-              <button className="delete-btn" onClick={() => deleteExercise(exercise.id)}>
-                ×
-              </button>
+      <section className="timeline">
+        {Object.keys(groupedByDate).length === 0 && (
+          <div className="empty">Пока нет записей</div>
+        )}
+
+        {Object.entries(groupedByDate).map(([date, items]) => (
+          <div className="day" key={date}>
+            <h3>{date}</h3>
+
+            <div className="cardsRow">
+              {items.map((item) => (
+                <article className="recordCard" key={item.id}>
+                  <div className="cardTop">
+                    <h4>{item.name}</h4>
+                    <button onClick={() => deleteRecord(item.id)}>×</button>
+                  </div>
+
+                  <div className="numbers">
+                    <div>
+                      <strong>{item.weight}</strong>
+                      <span>кг</span>
+                    </div>
+                    <div>
+                      <strong>{item.sets}</strong>
+                      <span>подходы</span>
+                    </div>
+                    <div>
+                      <strong>{item.reps}</strong>
+                      <span>повторы</span>
+                    </div>
+                  </div>
+
+                  <p className="volume">
+                    Объём: <b>{item.weight * item.sets * item.reps} кг</b>
+                  </p>
+
+                  <button className="editBtn" onClick={() => editRecord(item)}>
+                    Изменить
+                  </button>
+                </article>
+              ))}
             </div>
-
-            <div className="exercise-fields">
-              <label>
-                <span>Вес, кг</span>
-                <input
-                  type="number"
-                  value={exercise.weight}
-                  onChange={(e) =>
-                    updateExercise(exercise.id, "weight", Number(e.target.value))
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Подходы</span>
-                <input
-                  type="number"
-                  value={exercise.sets}
-                  onChange={(e) =>
-                    updateExercise(exercise.id, "sets", Number(e.target.value))
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Повторы</span>
-                <input
-                  type="number"
-                  value={exercise.reps}
-                  onChange={(e) =>
-                    updateExercise(exercise.id, "reps", Number(e.target.value))
-                  }
-                />
-              </label>
-            </div>
-
-            <div className="volume">
-              Объём упражнения:{" "}
-              <b>{Number(exercise.weight) * Number(exercise.sets) * Number(exercise.reps)} кг</b>
-            </div>
-          </article>
+          </div>
         ))}
       </section>
     </main>

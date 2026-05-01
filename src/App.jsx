@@ -1,192 +1,517 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
-const defaultExercises = [
-  { id: 1, name: "Жим лёжа", weight: 60, sets: 4, reps: 8 },
-  { id: 2, name: "Приседания", weight: 80, sets: 4, reps: 10 },
-  { id: 3, name: "Тяга верхнего блока", weight: 45, sets: 3, reps: 12 },
-];
-
 function App() {
-  const [exercises, setExercises] = useState(() => {
-    const saved = localStorage.getItem("workout-app");
-    return saved ? JSON.parse(saved) : defaultExercises;
+  const [workoutName, setWorkoutName] = useState("");
+  const [timerInput, setTimerInput] = useState("60");
+  const [secondsLeft, setSecondsLeft] = useState(60);
+  const [isRunning, setIsRunning] = useState(false);
+  const [isFinished, setIsFinished] = useState(false);
+
+  const [workouts, setWorkouts] = useState(() => {
+    const saved = localStorage.getItem("workout-app-data");
+    return saved ? JSON.parse(saved) : [];
   });
 
-  const [form, setForm] = useState({
-    name: "",
-    weight: "",
-    sets: "",
-    reps: "",
-  });
+  const audioRef = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem("workout-app", JSON.stringify(exercises));
-  }, [exercises]);
+    localStorage.setItem("workout-app-data", JSON.stringify(workouts));
+  }, [workouts]);
 
-  function addExercise() {
-    if (!form.name.trim()) return;
+  useEffect(() => {
+    if (!isRunning) return;
 
-    const newExercise = {
+    const interval = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          setIsRunning(false);
+          setIsFinished(true);
+          playFinishSound();
+          return 0;
+        }
+
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isRunning]);
+
+  const totalSeconds = useMemo(() => {
+    const value = Number(timerInput);
+    return value > 0 ? value : 60;
+  }, [timerInput]);
+
+  const stats = useMemo(() => {
+    let exercises = 0;
+    let sets = 0;
+    let volume = 0;
+    let done = 0;
+
+    workouts.forEach((workout) => {
+      exercises += workout.exercises.length;
+
+      workout.exercises.forEach((exercise) => {
+        const s = Number(exercise.sets) || 0;
+        const r = Number(exercise.reps) || 0;
+        const w = Number(exercise.weight) || 0;
+
+        sets += s;
+        volume += s * r * w;
+
+        if (exercise.done) done += 1;
+      });
+    });
+
+    return {
+      workouts: workouts.length,
+      exercises,
+      sets,
+      volume,
+      done,
+    };
+  }, [workouts]);
+
+  function setupAudio() {
+    if (!audioRef.current) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) {
+        audioRef.current = new AudioContext();
+      }
+    }
+  }
+
+  function playFinishSound() {
+    try {
+      setupAudio();
+
+      const context = audioRef.current;
+      if (!context) return;
+
+      if (context.state === "suspended") {
+        context.resume();
+      }
+
+      const now = context.currentTime;
+
+      [0, 0.2, 0.4].forEach((delay) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(880, now + delay);
+
+        gain.gain.setValueAtTime(0.0001, now + delay);
+        gain.gain.exponentialRampToValueAtTime(0.2, now + delay + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.18);
+
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+
+        oscillator.start(now + delay);
+        oscillator.stop(now + delay + 0.2);
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  function formatTime(seconds) {
+    const min = Math.floor(seconds / 60);
+    const sec = seconds % 60;
+
+    return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  }
+
+  function applyTimer() {
+    const value = Number(timerInput);
+
+    if (!value || value <= 0) {
+      alert("Введите корректное время");
+      return;
+    }
+
+    setSecondsLeft(value);
+    setIsRunning(false);
+    setIsFinished(false);
+  }
+
+  function startTimer() {
+    setupAudio();
+
+    if (secondsLeft === 0) {
+      setSecondsLeft(totalSeconds);
+    }
+
+    setIsFinished(false);
+    setIsRunning(true);
+  }
+
+  function pauseTimer() {
+    setIsRunning(false);
+  }
+
+  function resetTimer() {
+    setSecondsLeft(totalSeconds);
+    setIsRunning(false);
+    setIsFinished(false);
+  }
+
+  function addWorkout() {
+    if (!workoutName.trim()) {
+      alert("Введите название тренировки");
+      return;
+    }
+
+    const newWorkout = {
       id: Date.now(),
-      name: form.name,
-      weight: Number(form.weight) || 0,
-      sets: Number(form.sets) || 0,
-      reps: Number(form.reps) || 0,
+      name: workoutName.trim(),
+      exercises: [],
+      draft: {
+        name: "",
+        sets: "",
+        reps: "",
+        weight: "",
+      },
     };
 
-    setExercises([newExercise, ...exercises]);
-    setForm({ name: "", weight: "", sets: "", reps: "" });
+    setWorkouts((prev) => [newWorkout, ...prev]);
+    setWorkoutName("");
   }
 
-  function deleteExercise(id) {
-    setExercises(exercises.filter((exercise) => exercise.id !== id));
+  function deleteWorkout(workoutId) {
+    setWorkouts((prev) => prev.filter((workout) => workout.id !== workoutId));
   }
 
-  function updateExercise(id, field, value) {
-    setExercises(
-      exercises.map((exercise) =>
-        exercise.id === id ? { ...exercise, [field]: value } : exercise
+  function updateDraft(workoutId, field, value) {
+    setWorkouts((prev) =>
+      prev.map((workout) =>
+        workout.id === workoutId
+          ? {
+              ...workout,
+              draft: {
+                ...workout.draft,
+                [field]: value,
+              },
+            }
+          : workout
       )
     );
   }
 
-  const totalSets = exercises.reduce((sum, item) => sum + Number(item.sets), 0);
-  const totalVolume = exercises.reduce(
-    (sum, item) => sum + Number(item.weight) * Number(item.sets) * Number(item.reps),
-    0
-  );
+  function addExercise(workoutId) {
+    setWorkouts((prev) =>
+      prev.map((workout) => {
+        if (workout.id !== workoutId) return workout;
+
+        const draft = workout.draft;
+
+        if (
+          !draft.name.trim() ||
+          !String(draft.sets).trim() ||
+          !String(draft.reps).trim() ||
+          !String(draft.weight).trim()
+        ) {
+          alert("Заполни все поля упражнения");
+          return workout;
+        }
+
+        const newExercise = {
+          id: Date.now() + Math.random(),
+          name: draft.name.trim(),
+          sets: draft.sets,
+          reps: draft.reps,
+          weight: draft.weight,
+          done: false,
+        };
+
+        return {
+          ...workout,
+          exercises: [...workout.exercises, newExercise],
+          draft: {
+            name: "",
+            sets: "",
+            reps: "",
+            weight: "",
+          },
+        };
+      })
+    );
+  }
+
+  function deleteExercise(workoutId, exerciseId) {
+    setWorkouts((prev) =>
+      prev.map((workout) =>
+        workout.id === workoutId
+          ? {
+              ...workout,
+              exercises: workout.exercises.filter(
+                (exercise) => exercise.id !== exerciseId
+              ),
+            }
+          : workout
+      )
+    );
+  }
+
+  function toggleExercise(workoutId, exerciseId) {
+    setWorkouts((prev) =>
+      prev.map((workout) =>
+        workout.id === workoutId
+          ? {
+              ...workout,
+              exercises: workout.exercises.map((exercise) =>
+                exercise.id === exerciseId
+                  ? { ...exercise, done: !exercise.done }
+                  : exercise
+              ),
+            }
+          : workout
+      )
+    );
+  }
+
+  function clearAllData() {
+    const confirmed = confirm("Удалить все тренировки?");
+    if (!confirmed) return;
+
+    setWorkouts([]);
+  }
+
+  const progress =
+    totalSeconds > 0 ? Math.max(0, Math.min(1, secondsLeft / totalSeconds)) : 0;
+
+  const circumference = 2 * Math.PI * 52;
+  const dashOffset = circumference * (1 - progress);
 
   return (
     <div className="app">
-      <header className="hero">
-        <p className="badge">Сегодняшняя тренировка</p>
-        <h1>Workout Pro 💪</h1>
-        <p className="subtitle">
-          Записывай упражнения, вес, подходы и повторы прямо в зале.
-        </p>
-      </header>
+      <div className="phone">
+        <header className="hero">
+          <div>
+            <span className="badge">Fitness Planner</span>
+            <h1>Тренировки</h1>
+            <p>Упражнения, подходы, вес, отдых и статистика в одном месте.</p>
+          </div>
 
-      <section className="stats">
-        <div>
-          <span>{exercises.length}</span>
-          <p>упражнений</p>
-        </div>
-        <div>
-          <span>{totalSets}</span>
-          <p>подходов</p>
-        </div>
-        <div>
-          <span>{totalVolume}</span>
-          <p>кг объём</p>
-        </div>
-      </section>
+          <button className="ghost-button" onClick={clearAllData}>
+            Очистить
+          </button>
+        </header>
 
-      <section className="card form-card">
-        <h2>Добавить упражнение</h2>
+        <section className="stats-grid">
+          <div className="stat-card">
+            <span>Тренировок</span>
+            <strong>{stats.workouts}</strong>
+          </div>
 
-        <div className="form-grid">
-          <input
-            placeholder="Название упражнения"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
+          <div className="stat-card">
+            <span>Упражнений</span>
+            <strong>{stats.exercises}</strong>
+          </div>
 
-          <input
-            placeholder="Вес кг"
-            type="number"
-            value={form.weight}
-            onChange={(e) => setForm({ ...form, weight: e.target.value })}
-          />
+          <div className="stat-card">
+            <span>Готово</span>
+            <strong>{stats.done}</strong>
+          </div>
 
-          <input
-            placeholder="Подходы"
-            type="number"
-            value={form.sets}
-            onChange={(e) => setForm({ ...form, sets: e.target.value })}
-          />
+          <div className="stat-card">
+            <span>Объём</span>
+            <strong>{stats.volume} кг</strong>
+          </div>
+        </section>
 
-          <input
-            placeholder="Повторы"
-            type="number"
-            value={form.reps}
-            onChange={(e) => setForm({ ...form, reps: e.target.value })}
-          />
-        </div>
+        <section className="card">
+          <div className="section-header">
+            <h2>Новая тренировка</h2>
+          </div>
 
-        <button className="primary-btn" onClick={addExercise}>
-          + Добавить в тренировку
-        </button>
-      </section>
+          <div className="main-form">
+            <input
+              value={workoutName}
+              onChange={(e) => setWorkoutName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addWorkout();
+              }}
+              placeholder="Например: Грудь и трицепс"
+            />
 
-      <section className="exercise-list">
-        {exercises.map((exercise) => (
-          <div className="exercise-card" key={exercise.id}>
-            <div className="exercise-top">
-              <input
-                className="exercise-name"
-                value={exercise.name}
-                onChange={(e) =>
-                  updateExercise(exercise.id, "name", e.target.value)
-                }
-              />
+            <button onClick={addWorkout}>Добавить</button>
+          </div>
+        </section>
 
-              <button
-                className="delete-btn"
-                onClick={() => deleteExercise(exercise.id)}
-              >
-                ✕
-              </button>
+        <section className="card timer-card">
+          <div className="section-header">
+            <h2>Таймер отдыха</h2>
+
+            <span
+              className={`status ${
+                isFinished ? "finished" : isRunning ? "running" : ""
+              }`}
+            >
+              {isFinished ? "Время вышло" : isRunning ? "Идёт" : "Готов"}
+            </span>
+          </div>
+
+          <div className="timer-layout">
+            <div className="timer-circle">
+              <svg viewBox="0 0 140 140">
+                <circle className="timer-track" cx="70" cy="70" r="52" />
+                <circle
+                  className="timer-progress"
+                  cx="70"
+                  cy="70"
+                  r="52"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={dashOffset}
+                />
+              </svg>
+
+              <div className="timer-center">
+                <strong>{formatTime(secondsLeft)}</strong>
+                <span>отдых</span>
+              </div>
             </div>
 
-            <div className="exercise-grid">
-              <label>
-                Вес
+            <div className="timer-controls">
+              <div className="timer-input">
                 <input
                   type="number"
-                  value={exercise.weight}
-                  onChange={(e) =>
-                    updateExercise(exercise.id, "weight", Number(e.target.value))
-                  }
+                  min="1"
+                  value={timerInput}
+                  onChange={(e) => setTimerInput(e.target.value)}
+                  placeholder="Секунды"
                 />
-                <small>кг</small>
-              </label>
 
-              <label>
-                Подходы
-                <input
-                  type="number"
-                  value={exercise.sets}
-                  onChange={(e) =>
-                    updateExercise(exercise.id, "sets", Number(e.target.value))
-                  }
-                />
-              </label>
+                <button className="secondary-button" onClick={applyTimer}>
+                  Установить
+                </button>
+              </div>
 
-              <label>
-                Повторы
-                <input
-                  type="number"
-                  value={exercise.reps}
-                  onChange={(e) =>
-                    updateExercise(exercise.id, "reps", Number(e.target.value))
-                  }
-                />
-              </label>
-            </div>
-
-            <div className="volume">
-              Объём:{" "}
-              <strong>
-                {Number(exercise.weight) *
-                  Number(exercise.sets) *
-                  Number(exercise.reps)}{" "}
-                кг
-              </strong>
+              <div className="timer-buttons">
+                <button onClick={startTimer}>Старт</button>
+                <button className="secondary-button" onClick={pauseTimer}>
+                  Пауза
+                </button>
+                <button className="danger-soft-button" onClick={resetTimer}>
+                  Сброс
+                </button>
+              </div>
             </div>
           </div>
-        ))}
-      </section>
+        </section>
+
+        <section className="workouts">
+          {workouts.length === 0 ? (
+            <div className="empty">
+              <div>🏋️</div>
+              <h3>Пока тренировок нет</h3>
+              <p>Добавь первую тренировку и начни вести прогресс.</p>
+            </div>
+          ) : (
+            workouts.map((workout) => (
+              <article className="workout-card" key={workout.id}>
+                <div className="workout-header">
+                  <div>
+                    <h3>{workout.name}</h3>
+                    <p>{workout.exercises.length} упражнений</p>
+                  </div>
+
+                  <button
+                    className="danger-button"
+                    onClick={() => deleteWorkout(workout.id)}
+                  >
+                    Удалить
+                  </button>
+                </div>
+
+                <div className="exercise-form">
+                  <input
+                    value={workout.draft.name}
+                    onChange={(e) =>
+                      updateDraft(workout.id, "name", e.target.value)
+                    }
+                    placeholder="Упражнение"
+                  />
+
+                  <input
+                    type="number"
+                    value={workout.draft.sets}
+                    onChange={(e) =>
+                      updateDraft(workout.id, "sets", e.target.value)
+                    }
+                    placeholder="Подходы"
+                  />
+
+                  <input
+                    type="number"
+                    value={workout.draft.reps}
+                    onChange={(e) =>
+                      updateDraft(workout.id, "reps", e.target.value)
+                    }
+                    placeholder="Повторы"
+                  />
+
+                  <input
+                    type="number"
+                    value={workout.draft.weight}
+                    onChange={(e) =>
+                      updateDraft(workout.id, "weight", e.target.value)
+                    }
+                    placeholder="Вес"
+                  />
+
+                  <button onClick={() => addExercise(workout.id)}>
+                    Добавить
+                  </button>
+                </div>
+
+                <div className="exercise-list">
+                  {workout.exercises.length === 0 ? (
+                    <p className="small-empty">Упражнений пока нет</p>
+                  ) : (
+                    workout.exercises.map((exercise) => (
+                      <div
+                        className={`exercise-item ${
+                          exercise.done ? "done" : ""
+                        }`}
+                        key={exercise.id}
+                      >
+                        <button
+                          className="check-button"
+                          onClick={() =>
+                            toggleExercise(workout.id, exercise.id)
+                          }
+                        >
+                          {exercise.done ? "✓" : ""}
+                        </button>
+
+                        <div className="exercise-info">
+                          <strong>{exercise.name}</strong>
+                          <p>
+                            {exercise.sets} подходов • {exercise.reps} повторов
+                            • {exercise.weight} кг
+                          </p>
+                        </div>
+
+                        <button
+                          className="delete-exercise-button"
+                          onClick={() =>
+                            deleteExercise(workout.id, exercise.id)
+                          }
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </article>
+            ))
+          )}
+        </section>
+      </div>
     </div>
   );
 }
